@@ -1,8 +1,10 @@
+import numpy
 import numpy as np
 import pyunit_prime as pp
 import random
 import DataStructure
-
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 def Cutting(x: int, dt, s):
     # x is the input ; dt:basic datatype ;s byte len of dt
@@ -60,8 +62,7 @@ def DBLPDataProcessor(path):
             continue
         e = e.split(';')
         v = (e[0].split(',')[0], e[0].split(',')[1])
-        cell = DataStructure.InfoCell(v[0], v[1], 1)
-        graph_stream.append(cell)
+        graph_stream.append((v[0], v[1], 1))
         l_stream += 1
     f.close()
     return graph_stream, l_stream
@@ -77,7 +78,7 @@ def SingleHashGenerator(w, n, range1=51, range2=100):
     for i in range(n):
         a = al[random.randint(0, len(al) - 1)]
         b = bl[random.randint(0, len(bl) - 1)]
-        p = pl[random.randint(0, len(pl) - 1)]
+        p = pl[-1]
 
         def hash_func(x):
             h = (a * x + b)
@@ -87,3 +88,32 @@ def SingleHashGenerator(w, n, range1=51, range2=100):
 
         hash_functions.append([hash_func, p])
     return hash_functions
+
+
+def GenerateHashPara(w, n, range1=51, range2=100):
+    para_list = []
+    al = pp.prime_range(range1 + 1, range2)
+    bl = pp.prime_range(1, range1)
+    if w < 30:
+        pl = pp.prime_range(0, w)
+    else:
+        pl = pp.prime_range(w - 30, w)
+    p = pl[-1]
+    for i in range(n):
+        a = al[random.randint(0, len(al) - 1)]
+        b = bl[random.randint(0, len(bl) - 1)]
+        para_list.append((a, b, p))
+    return para_list
+
+
+def trans_pyramid2pillar(pyramid:DataStructure.PyramidSketch):
+    dt = np.uint32
+    z = numpy.zeros((pyramid.w, pyramid.w),dtype=dt)
+    print(z)
+    for x in range(pyramid.w):
+        for y in range(pyramid.w):
+            val = DataStructure.PyramidSketch.query_edge_base(pyramid, (x,y))
+            z[x, y] = dt(val)
+    sns.heatmap(z).invert_yaxis()
+    plt.show()
+    return z

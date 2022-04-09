@@ -1,7 +1,6 @@
 import numpy as np
 from threading import Thread
 import Tools
-import time
 import tqdm
 
 
@@ -143,17 +142,17 @@ class PyramidSlice:
 
 
 class PyramidSketch(Thread):
-    def __init__(self, sketch_id, hfunc_pair, stream, dt, s):
+    def __init__(self, sketch_id, w, stream, dt, s):
         # sketch_id is the index of the sketch.
         # hfunc_pair is the (hfunc,w) tuple
         # stream is the graph stream,a list of Infocell
         # dt means the basic datatype of the matrix,e.g np.uint8
         Thread.__init__(self)
         self.id = sketch_id
-        self.hfunc = hfunc_pair[0]
         self.gs = stream
         self.dt = dt
-        self.base_layer = np.zeros((hfunc_pair[1], hfunc_pair[1]), dtype=dt)
+        self.w = w
+        self.base_layer = np.zeros((w, w), dtype=dt)
         self.s = s
         # At first we initialize the base-layer and the first-layer.
         self.pyramid_proj = []
@@ -171,14 +170,12 @@ class PyramidSketch(Thread):
         print("No.%d Pyramid base has been initialized" % self.id)
         # print("The first layer of Pyramid Structure has been initialized,No.", self.id)
 
-    def insert_edge(self, cell: InfoCell):
+    def insert_edge(self, cell):
         # insert an edge,which is a entity of Infocell
-        x, y = int(cell.edge[0]), int(cell.edge[1])
-        val = self.dt(cell.weight)
+        x, y = int(cell[0]), int(cell[1])
+        val = self.dt(cell[2])
         # Step 0 :find the hashed position in the Base, e.g M[x][y]
         # Step 1 :let them plu,if outflow, let the outflow part go to the n-layer part
-        x = self.hfunc(x)
-        y = self.hfunc(y)
         old_val = self.base_layer[x][y]
         res = old_val + val
         if res < old_val:
@@ -188,14 +185,12 @@ class PyramidSketch(Thread):
         self.base_layer[x][y] = res
         # end
 
-    def delete_edge(self, delete_cell: InfoCell):
+    def delete_edge(self, delete_cell):
         # how to delete a edge
-        x, y = int(delete_cell.edge[0]), int(delete_cell.edge[1])
-        val = self.dt(delete_cell.weight)
+        x, y = int(delete_cell[0]), int(delete_cell[1])
+        val = self.dt(delete_cell[2])
         # Step 0:find the hashed position in the Base layer,e.g M[x][y]
         # Step 1:let it subtract,if step_back,put the right val to M and use func step_back to let it run in the n-layer
-        x = self.hfunc(x)
-        y = self.hfunc(y)
         old_val = self.base_layer[x][y]
         res = old_val - val
         if res > old_val:
@@ -210,15 +205,26 @@ class PyramidSketch(Thread):
         y = edge[1]
         val = [self.base_layer[x][y]]
         b_first = self.pyramid_proj[y].bricks[0][int(x / 2)]
-        self.query_edge_brick(b_first, val, 0)
+        self.query_edge_brick(b_first, val, 0, int(x/2))
         return Tools.Fusing(val, self.s)
 
-    def query_edge_brick(self, b, val, h):
+    def query_edge_brick(self, b, val, h, lr):
         if type(b) == int:
             return 0
-        if b.parent:
-            val.append(b.val)
-            self.query_edge_brick(b.parent, val, h + 1)
+        if type(b.parent) == brick:
+            if lr % 2:
+                if b.parent.Rflag == 1:
+                    val.append(b.val)
+                    self.query_edge_brick(b.parent, val, h + 1, int(lr/2))
+                else:
+                    val.append(b.val)
+            else:
+                if b.parent.Lflag == 1:
+                    val.append(b.val)
+                    self.query_edge_brick(b.parent, val, h + 1, int(lr/2))
+                else:
+                    val.append(b.val)
+
         else:
             val.append(b.val)
             return 0
@@ -226,33 +232,44 @@ class PyramidSketch(Thread):
     def run(self):
         # Inheritance from threading.Thread
         print('sketch %d start processing' % self.id)
-        t1 = time.time()
         for cell in self.gs:
             self.insert_edge(cell)
-        t2 = time.time() - t1
-        print('Sketch %d use %.5f time to initialize' % (self.id, t2))
 
     def print_M(self):
         # Use to print the matrix form data of the pyramid
         print('base layer\n', self.base_layer)
         print(self.base_layer.max())
-        print('The first brick layer')
-        for s in self.pyramid_proj:
-            for r in s.bricks[0].values():
-                print(r.val, end=" ")
-            print(' ')
+        # print('The first brick layer')
+        # for s in self.pyramid_proj:
+        #     for r in s.bricks[0].values():
+        #         print(r.val, end=" ")
+        #     print(' ')
 
     def query_in_degree(self, x):
         sums = self.base_layer.sum(axis=0)
         x = int(x)
+        lr = int(x / 2)
         val_base = [sums[x]]
-        for slice in self.pyramid_proj:
+        print(val_base)
+        for sl in self.pyramid_proj:
             val_list_base = []
-            b = slice.bricks[0][int(x/2)]
+            b = sl.bricks[0][int(x/2)]
             val_list_base.append(b.val)
             while type(b.parent) == brick:
-                b = b.parent
-                val_list_base.append(b.val)
+                if lr % 2:
+                    if b.parent.Rflag == 1:
+                        lr /= 2
+                        b = b.parent
+                        val_list_base.append(b.val)
+                    else:
+                        break
+                else:
+                    if b.parent.Lflag == 1:
+                        lr /= 2
+                        b = b.parent
+                        val_list_base.append(b.val)
+                    else:
+                        break
             val_base.append(Tools.Fusing(val_list_base, self.s))
         res = 0
         for c in val_base:
@@ -262,13 +279,26 @@ class PyramidSketch(Thread):
     def query_out_degree(self, x):
         sums = self.base_layer.sum(axis=1)
         val_base = [sums[x]]
-        slice = self.pyramid_proj[x]
+        p_slice = self.pyramid_proj[x]
         val_base_list = []
-        for b in slice.bricks[0].values():
+        lr = int(x / 2)
+        for b in p_slice.bricks[0].values():
             val_base_list.append(b.val)
             while type(b.parent) == brick:
-                b = b.parent
-                val_base_list.append(b.val)
+                if lr % 2:
+                    if b.parent.Rflag == 1:
+                        lr = int(lr/2)
+                        b = b.parent
+                        val_base_list.append(b.val)
+                    else:
+                        break
+                else:
+                    if b.parent.Lflag == 1:
+                        lr = int(lr/2)
+                        b = b.parent
+                        val_base_list.append(b.val)
+                    else:
+                        break
             val_base.append(Tools.Fusing(val_base_list, self.s))
         res = 0
         for c in val_base:
